@@ -1,6 +1,6 @@
 The goal of this system is to control the start and end procedures of my PhD experiment. This contains 2 individual controllers. 
-Controller 1 controls the running of the peristaltic pump, the laser distance sensor.
-The second controller is an off the shelf product, it controls the movement of linear stages and ignition of my ignition coil.
+Controller 1 controls the running of the peristaltic pump and the laser distance sensor.
+The second controller is an off-the-shelf product, which controls the movement of the linear stages and ignition of my ignition coil.
 
 
 Controller 1 is made from the following components:
@@ -15,25 +15,49 @@ E stop (D27)
 PWM to voltage sensor, PWM out(D13)
 RS485 to TTL (TX2->B & RX2->A & D4->REDE )
 
+Relationship between the potentiometer, the voltage sensor and PWM to voltage converter.
+A potentiometer is a medium for the user to interact with the machine and input the desired value from 0-100%. 
+The PWM to voltage sensor is for converting the signal from the potentiometer and output PWM signal to be converted into voltage, which will control the rotation speed of the peristaltic pump.
+The voltage sensor is connected parrallel in output of convertoer, to check the actual voltage output from the PWM to voltage converter, because this converter is not accurate.
+So the potentiometer indirectly controls the voltage. The voltage sensor gets feedback to show the actual value.
+potentiometer -> ESP32, ESP32->PWM to voltage convertor, Voltage convertor -> ESP32
+
+MOSFET functions 
+MOSFET1 Closed=start    Open=Stop
+MOSFET2 Closed=CCW, Open=CW
+MOSFET3 Closed=Prime, Open=no action
+
+
 Controller 1 is expected to do the following. 
 Mode 1: manual prime mode
-function: Allow the user to fill up or drain the container with precise readings from distance sensor
+function: Allow the user to fill up or drain the container with precise readings from the distance sensor
 Constantly read values from RS 485 and display it on LCD
 Close the circuit on MOSFET 3 to enable prime mode
-if button 1 is pressed, close MOSFET 1 to Start, if button is unpressed, oppen the circuit to stop
-If Button 2 is pressed, Close the MOSFET 2 and 1 to enter CCW mode and start, if button is unpressed, open both circuit to exit CCW mode and stop the pump
+if button 1 is pressed, close MOSFET 1 to Start, if the button is unpressed, open the circuit to stop
+If Button 2 is pressed, close the MOSFET 2 and 1 to enter CCW mode and start, if button is unpressed, open both circuit to exit CCW mode and stop the pump
 
 
 Mode 2
 Function: to manually micro-adjust the fuel injection and injection at a constant speed.
-keep the mosfet 3 open, unlike mode 1
-Keep reading data from RS485, and potential meter, convert value from Potentiometer to PWM and show voltage sensor data and display it on LCD screen.
-If button 1 is pressed, close the circuit on mosfet 1, when its unpressed, open mosfet 1
-If button 2 is pressed, close the circuit on Mosfet 2 and 1, and when its unpressed, open mosfet 1 and 2.
-is Button 3 is pressed, close the mosfet circuit 1 and keep it closed until pressed again.
+keep the MOSFET 3 open, unlike mode 1
+Keep reading data from RS485, and the potentiometer, convert the value from the potentiometer to PWM and show the voltage sensor data and display it on the LCD screen.
+If button 1 is pressed, close the circuit on MOSFET 1, when it's unpressed, open MOSFET 1
+If button 2 is pressed, close the circuit on Mosfet 2 and 1, and when it's unpressed, open Mosfet 1 and 2.
+is Button 3 is pressed, close the MOSFET circuit 1 and keep it closed until pressed again.
 
 
 Mode 3
+function: to automatically control the fuel injection according to the distance level sensor
+constantly read from the distance sensor, the voltage sensor, the potentiometer and display them on LCD screen
+When button3 is pressed. Save the voltage reading (VStart)and the distance reading(DStart), start the pump with VStart voltage output. Read distance sensor with sampling rate of 10HZ. 
+Fuel level dropping = - disance 
+Fuel level going up = +distance
+
+if distance is = DStart, with +-0.05, keep the constant speed
+Distance difference is < -0.1, increase the speed by 150% for 5 sampling time frame, reduce speed to VStart
+Whenthe  difference is > 0.1, decrease the speed by 150% for 5 sampling time frame, reduce speed to VStart.
+
+This cycle continues until button 3 is pressed again.
 
 
 E stop 

@@ -1,0 +1,157 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// -------- Pins (as you listed) --------
+constexpr int PIN_BTN1  = 14;  // D14
+constexpr int PIN_BTN2  = 15;  // D15
+constexpr int PIN_BTN3  = 23;  // D23
+constexpr int PIN_ESTOP = 27;  // D27
+
+constexpr int PIN_SDA = 21;    // D21
+constexpr int PIN_SCL = 22;    // D22
+
+// -------- Logic --------
+// If using INPUT_PULLUP to GND: pressed = LOW => ACTIVE_LOW = true
+constexpr bool ACTIVE_LOW = true;
+
+// Debounce
+constexpr uint32_t DEBOUNCE_MS = 30;
+
+// LCD handle (we'll set address at runtime)
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// -------- Small helpers --------
+bool i2cDevicePresent(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return (Wire.endTransmission() == 0);
+}
+
+uint8_t pickLcdAddress() {
+  // Most common backpacks are 0x27 or 0x3F
+  if (i2cDevicePresent(0x27)) return 0x27;
+  if (i2cDevicePresent(0x3F)) return 0x3F;
+
+  // If neither, do a quick scan and return the first found device
+  for (uint8_t a = 1; a < 127; a++) {
+    if (i2cDevicePresent(a)) return a;
+  }
+  return 0; // none
+}
+
+struct DebouncedInput {
+  int pin;
+  bool stableLevel;
+  bool lastRaw;
+  uint32_t lastChangeMs;
+
+  void begin(bool initial) {
+    stableLevel = initial;
+    lastRaw = initial;
+    lastChangeMs = millis();
+  }
+
+  void update() {
+    bool raw = digitalRead(pin);
+    if (raw != lastRaw) {
+      lastRaw = raw;
+      lastChangeMs = millis();
+    }
+    if ((millis() - lastChangeMs) >= DEBOUNCE_MS) {
+      stableLevel = lastRaw;
+    }
+  }
+
+  bool isActive() const {
+    // "active" means "pressed"
+    if (ACTIVE_LOW) return stableLevel == LOW;
+    else            return stableLevel == HIGH;
+  }
+};
+
+DebouncedInput btn1{PIN_BTN1}, btn2{PIN_BTN2}, btn3{PIN_BTN3}, estop{PIN_ESTOP};
+
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+
+  // I2C
+  Wire.begin(PIN_SDA, PIN_SCL);
+
+  // Inputs
+  if (ACTIVE_LOW) {
+    pinMode(PIN_BTN1, INPUT_PULLUP);
+    pinMode(PIN_BTN2, INPUT_PULLUP);
+    pinMode(PIN_BTN3, INPUT_PULLUP);
+    pinMode(PIN_ESTOP, INPUT_PULLUP);
+  } else {
+    // If you have external pulldowns and wire buttons to 3.3V
+    pinMode(PIN_BTN1, INPUT);
+    pinMode(PIN_BTN2, INPUT);
+    pinMode(PIN_BTN3, INPUT);
+    pinMode(PIN_ESTOP, INPUT);
+  }
+
+  // Init debouncers with current read
+  btn1.begin(digitalRead(PIN_BTN1));
+  btn2.begin(digitalRead(PIN_BTN2));
+  btn3.begin(digitalRead(PIN_BTN3));
+  estop.begin(digitalRead(PIN_ESTOP));
+
+  // LCD address detect
+  uint8_t addr = pickLcdAddress();
+  if (addr == 0) {
+    Serial.println("ERROR: No I2C device found. Check SDA/SCL wiring and LCD backpack.");
+  } else {
+    Serial.print("I2C device found, using LCD address: 0x");
+    Serial.println(addr, HEX);
+
+    lcd = LiquidCrystal_I2C(addr, 16, 2);
+    lcd.init();
+    lcd.backlight();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Button test");
+    lcd.setCursor(0, 1);
+    lcd.print("Addr 0x");
+    lcd.print(addr, HEX);
+    delay(800);
+    lcd.clear();
+  }
+}
+
+void loop() {
+  btn1.update();
+  btn2.update();
+  btn3.update();
+  estop.update();
+
+  // Build display text
+  // Line1: B1:0 B2:0 B3:0
+  // Line2: ESTOP:0
+  lcd.setCursor(0, 0);
+  lcd.print("B1:");
+  lcd.print(btn1.isActive() ? "1" : "0");
+  lcd.print(" B2:");
+  lcd.print(btn2.isActive() ? "1" : "0");
+  lcd.print(" B3:");
+  lcd.print(btn3.isActive() ? "1" : "0");
+  lcd.print(" "); // pad
+
+  lcd.setCursor(0, 1);
+  lcd.print("ESTOP:");
+  lcd.print(estop.isActive() ? "1" : "0");
+  lcd.print("          "); // clear tail
+
+  // Serial output (only when something changes)
+  static bool lastB1=false, lastB2=false, lastB3=false, lastES=false;
+  bool b1=btn1.isActive(), b2=btn2.isActive(), b3=btn3.isActive(), es=estop.isActive();
+  if (b1!=lastB1 || b2!=lastB2 || b3!=lastB3 || es!=lastES) {
+    Serial.print("B1="); Serial.print(b1);
+    Serial.print(" B2="); Serial.print(b2);
+    Serial.print(" B3="); Serial.print(b3);
+    Serial.print(" ESTOP="); Serial.println(es);
+    lastB1=b1; lastB2=b2; lastB3=b3; lastES=es;
+  }
+
+  delay(20);
+}

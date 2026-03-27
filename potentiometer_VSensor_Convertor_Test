@@ -1,0 +1,154 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// ---------------- Pins ----------------
+const int PIN_PWM    = 13;   // PWM to converter
+const int PIN_POT    = 32;   // potentiometer
+const int PIN_VSENSE = 33;   // voltage sensor
+const int PIN_SDA    = 21;
+const int PIN_SCL    = 22;
+
+// ---------------- LCD ----------------
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// ---------------- PWM settings ----------------
+// Based on your example, the converter may need a minimum PWM
+const int PWM_MAX = 255;
+const int PWM_MIN_ACTIVE = 25;   // prevents converter standby
+
+// ---------------- Voltage scaling ----------------
+// If your voltage sensor is a divider, change this.
+// 1.0 = direct 0-3.3V into D33
+// 5.0 = common 0-25V voltage sensor board
+float SENSOR_RATIO = 1.0;
+
+// ---------------- Timing ----------------
+unsigned long lastUpdate = 0;
+const unsigned long UPDATE_MS = 200;
+
+// ---------------- Helpers ----------------
+bool i2cDevicePresent(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return (Wire.endTransmission() == 0);
+}
+
+uint8_t findLcdAddress() {
+  if (i2cDevicePresent(0x27)) return 0x27;
+  if (i2cDevicePresent(0x3F)) return 0x3F;
+
+  for (uint8_t a = 1; a < 127; a++) {
+    if (i2cDevicePresent(a)) return a;
+  }
+  return 0;
+}
+
+int readAverageADC(int pin, int samples = 12) {
+  long sum = 0;
+  for (int i = 0; i < samples; i++) {
+    sum += analogRead(pin);
+    delay(2);
+  }
+  return sum / samples;
+}
+
+float adcToVoltage(int adcRaw) {
+  float adcVoltage = (adcRaw * 3.3f) / 4095.0f;
+  return adcVoltage * SENSOR_RATIO;
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+
+  pinMode(PIN_PWM, OUTPUT);
+  analogReadResolution(12);
+
+  // Try to set PWM frequency/resolution if supported by your ESP32 core
+  // If these 2 lines cause compile errors, comment them out.
+  analogWriteFrequency(PIN_PWM, 1000);   // 1 kHz
+  analogWriteResolution(PIN_PWM, 8);     // 0-255
+
+  analogWrite(PIN_PWM, 0);
+
+  Wire.begin(PIN_SDA, PIN_SCL);
+
+  uint8_t lcdAddr = findLcdAddress();
+  if (lcdAddr != 0) {
+    lcd = LiquidCrystal_I2C(lcdAddr, 16, 2);
+    lcd.init();
+    lcd.backlight();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("PWM Conv Test");
+    lcd.setCursor(0, 1);
+    lcd.print("LCD 0x");
+    lcd.print(lcdAddr, HEX);
+    delay(1000);
+    lcd.clear();
+  } else {
+    Serial.println("LCD not found");
+  }
+
+  Serial.println("Pot -> ESP32 -> PWM converter");
+  Serial.println("Converter output -> Voltage sensor -> ESP32");
+  Serial.println("D32 = pot, D13 = PWM, D33 = voltage sensor");
+  Serial.println("PWM floor enabled to prevent standby");
+}
+
+void loop() {
+  // Read potentiometer
+  int potRaw = readAverageADC(PIN_POT);
+
+  // User demand: 0-100%
+  int setPercent = map(potRaw, 0, 4095, 0, 100);
+  setPercent = constrain(setPercent, 0, 100);
+
+  // Convert demand to PWM 0-255
+  int pwmValue = map(setPercent, 0, 100, 0, PWM_MAX);
+
+  // Important: keep a minimum PWM if output is meant to be on
+  if (setPercent > 0 && pwmValue < PWM_MIN_ACTIVE) {
+    pwmValue = PWM_MIN_ACTIVE;
+  }
+
+  // Output PWM
+  analogWrite(PIN_PWM, pwmValue);
+
+  // Periodic update
+  if (millis() - lastUpdate >= UPDATE_MS) {
+    lastUpdate = millis();
+
+    int vsRaw = readAverageADC(PIN_VSENSE);
+    float measuredVoltage = adcToVoltage(vsRaw);
+
+    // LCD line 1
+    lcd.setCursor(0, 0);
+    lcd.print("Set:");
+    if (setPercent < 100) lcd.print(" ");
+    if (setPercent < 10)  lcd.print(" ");
+    lcd.print(setPercent);
+    lcd.print("% P:");
+    if (pwmValue < 100) lcd.print(" ");
+    if (pwmValue < 10)  lcd.print(" ");
+    lcd.print(pwmValue);
+    lcd.print(" ");
+
+    // LCD line 2
+    lcd.setCursor(0, 1);
+    lcd.print("Out:");
+    lcd.print(measuredVoltage, 2);
+    lcd.print("V    ");
+
+    // Serial
+    Serial.print("Pot=");
+    Serial.print(potRaw);
+    Serial.print("  Set=");
+    Serial.print(setPercent);
+    Serial.print("%  PWM=");
+    Serial.print(pwmValue);
+    Serial.print("  ADC=");
+    Serial.print(vsRaw);
+    Serial.print("  V=");
+    Serial.println(measuredVoltage, 3);
+  }
+}

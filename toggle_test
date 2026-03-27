@@ -1,0 +1,42 @@
+constexpr int PIN_TOG1 = 34;
+constexpr int PIN_TOG2 = 35;
+
+String decodeToggle(int t1, int t2) {
+  if (t1 == 1 && t2 == 0) return "LEFT";
+  if (t1 == 0 && t2 == 0) return "MIDDLE";
+  if (t1 == 0 && t2 == 1) return "RIGHT";
+  if (t1 == 1 && t2 == 1) return "INVALID";
+  return "UNKNOWN";
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  pinMode(PIN_TOG1, INPUT);
+  pinMode(PIN_TOG2, INPUT);
+
+  Serial.println("3-position toggle test");
+}
+
+void loop() {
+  static int lastT1 = -1;
+  static int lastT2 = -1;
+
+  int t1 = digitalRead(PIN_TOG1);
+  int t2 = digitalRead(PIN_TOG2);
+
+  if (t1 != lastT1 || t2 != lastT2) {
+    Serial.print("T1=");
+    Serial.print(t1);
+    Serial.print(" T2=");
+    Serial.print(t2);
+    Serial.print(" => ");
+    Serial.println(decodeToggle(t1, t2));
+
+    lastT1 = t1;
+    lastT2 = t2;
+  }
+
+  delay(20);
+}

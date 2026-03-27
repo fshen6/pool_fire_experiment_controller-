@@ -1,0 +1,48 @@
+constexpr int MOSFET1_PIN = 19;
+constexpr int MOSFET2_PIN = 25;
+constexpr int MOSFET3_PIN = 26;
+
+void allOff() {
+  digitalWrite(MOSFET1_PIN, LOW);
+  digitalWrite(MOSFET2_PIN, LOW);
+  digitalWrite(MOSFET3_PIN, LOW);
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  pinMode(MOSFET1_PIN, OUTPUT);
+  pinMode(MOSFET2_PIN, OUTPUT);
+  pinMode(MOSFET3_PIN, OUTPUT);
+
+  allOff();
+
+  Serial.println("MOSFET test starting...");
+  Serial.println("M1 = D19");
+  Serial.println("M2 = D25");
+  Serial.println("M3 = D26");
+}
+
+void loop() {
+  Serial.println("MOSFET 1 ON");
+  digitalWrite(MOSFET1_PIN, HIGH);
+  delay(2000);
+  digitalWrite(MOSFET1_PIN, LOW);
+  Serial.println("MOSFET 1 OFF");
+  delay(1000);
+
+  Serial.println("MOSFET 2 ON");
+  digitalWrite(MOSFET2_PIN, HIGH);
+  delay(2000);
+  digitalWrite(MOSFET2_PIN, LOW);
+  Serial.println("MOSFET 2 OFF");
+  delay(1000);
+
+  Serial.println("MOSFET 3 ON");
+  digitalWrite(MOSFET3_PIN, HIGH);
+  delay(2000);
+  digitalWrite(MOSFET3_PIN, LOW);
+  Serial.println("MOSFET 3 OFF");
+  delay(1000);
+}

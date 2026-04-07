@@ -1,0 +1,11 @@
+const int pwmPin = 13;
+const int pwmFreq = 1000; // 1 kHz
+const int pwmResolution = 8; // 8-bit: duty 0..255
+
+void setup () {
+  ledcAttach (pwmPin, pwmFreq, pwmResolution) ;
+  ledcWrite(pwmPin, 100); // 50% duty
+}
+
+void loop() {
+}

@@ -2,9 +2,9 @@
 #include <LiquidCrystal_I2C.h>
 
 // -------- Pins (as you listed) --------
-constexpr int PIN_BTN1  = 14;  // D14
+constexpr int PIN_BTN1  = 23;  // D23
 constexpr int PIN_BTN2  = 15;  // D15
-constexpr int PIN_BTN3  = 23;  // D23
+constexpr int PIN_BTN3  = 14;  // D14
 constexpr int PIN_ESTOP = 27;  // D27
 
 constexpr int PIN_SDA = 21;    // D21

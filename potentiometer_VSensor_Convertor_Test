@@ -20,7 +20,7 @@ const int PWM_MIN_ACTIVE = 25;   // prevents converter standby
 // If your voltage sensor is a divider, change this.
 // 1.0 = direct 0-3.3V into D33
 // 5.0 = common 0-25V voltage sensor board
-float SENSOR_RATIO = 1.0;
+float SENSOR_RATIO = 5.305;
 
 // ---------------- Timing ----------------
 unsigned long lastUpdate = 0;

@@ -25,16 +25,18 @@ potentiometer -> ESP32, ESP32->PWM to voltage convertor, Voltage convertor -> ES
 Relay functions 
 Relay1 Closed=start    Open=Stop
 Relay2 Closed=CCW, Open=CW
-Relay3 Closed=Prime, Open=no action
+
 
 
 Controller 1 is expected to do the following. 
 Mode 1: manual prime mode
 function: Allow the user to fill up or drain the container with precise readings from the distance sensor
 Constantly read values from RS 485 and display it on LCD
-Close the circuit on Relay 3 to enable prime mode
-if button 1 is pressed, close Relay 1 to Start, if the button is unpressed, open the circuit to stop
+prime: close relay 1 and generate maximum voltage (10v)
+Close the circuit on Relay 1 and generate maximum voltage to start the pump with maximum speed.
+if button 1 is pressed, close Relay 1 to Start; if the button is unpressed, open the circuit to stop
 If Button 2 is pressed, close the Relay 2 and 1 to enter CCW mode and start, if button is unpressed, open both circuit to exit CCW mode and stop the pump
+If E stop is pressed, close relay 1 and 2 and generate maximum voltage to strat the pump CCW until its unpressed.
 
 
 Mode 2
@@ -43,7 +45,8 @@ keep the Relay 3 open, unlike mode 1
 Keep reading data from RS485, and the potentiometer, convert the value from the potentiometer to PWM and show the voltage sensor data and display it on the LCD screen.
 If button 1 is pressed, close the circuit on Relay 1, when it's unpressed, open Relay 1
 If button 2 is pressed, close the circuit on Relay 2 and 1, and when it's unpressed, open Relay 1 and 2.
-is Button 3 is pressed, close the Relay circuit 1 and keep it closed until pressed again.
+If Button 3 is pressed, close the Relay circuit 1 and keep it closed until pressed again.
+If E stop is pressed, close relay 1 and 2 and generate maximum voltage to strat the pump CCW until its unpressed.
 
 
 Mode 3

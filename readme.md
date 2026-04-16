@@ -8,7 +8,7 @@ esp32 wroom
 3 stage toggle (D34 & D35)
 10k potential meter (D32)
 Voltage sensor (D33)
-3 Relays (D19 & D25 & D26) Start/stop, Cw/CCW, Prime
+2 Relays (D19 & D25) Start/stop, Cw/CCW
 3 buttons (D14 & D15 & D23) 
 2x16 I2C LCD screen (D21 & D22)
 E stop (D27)

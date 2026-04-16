@@ -9,7 +9,7 @@ esp32 wroom
 10k potential meter (D32)
 Voltage sensor (D33)
 2 Relays (D19 & D25) Start/stop, Cw/CCW
-3 buttons (D14 & D15 & D23) 
+3 buttons(up & down & start/stop) (D14 & D15 & D23) 
 2x16 I2C LCD screen (D21 & D22)
 E stop (D27)
 PWM to voltage sensor, PWM out(D13)

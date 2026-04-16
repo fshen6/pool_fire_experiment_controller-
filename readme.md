@@ -41,7 +41,6 @@ If E stop is pressed, close relay 1 and 2 and generate maximum voltage to strat 
 
 Mode 2
 Function: to manually micro-adjust the fuel injection and injection at a constant speed.
-keep the Relay 3 open, unlike mode 1
 Keep reading data from RS485, and the potentiometer, convert the value from the potentiometer to PWM and show the voltage sensor data and display it on the LCD screen.
 If button 1 is pressed, close the circuit on Relay 1, when it's unpressed, open Relay 1
 If button 2 is pressed, close the circuit on Relay 2 and 1, and when it's unpressed, open Relay 1 and 2.

@@ -1,0 +1,300 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// -------------------- LCD --------------------
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// -------------------- Pins --------------------
+const int POT_PIN      = 32;
+const int VSENSE_PIN   = 33;
+const int PWM_PIN      = 13;
+
+const int BUTTON1_PIN  = 23;   // active-high, latched run toggle
+const int BUTTON2_PIN  = 15;   // reserved
+const int BUTTON3_PIN  = 14;   // active-low, constant injection toggle
+const int BUTTON4_PIN  = 18;   // active-low, external relay toggle
+const int EDRAIN_PIN   = 27;   // INPUT_PULLUP, active LOW
+
+const int RELAY1_PIN   = 19;   // start/stop
+const int RELAY2_PIN   = 25;   // direction
+const int RELAY3_PIN   = 26;   // external relay
+
+// -------------------- Relay polarity --------------------
+// Change these if your relay module is active-low
+const int RELAY_ON  = HIGH;
+const int RELAY_OFF = LOW;
+
+// -------------------- ADC / Voltage --------------------
+const int ADC_MAX = 4095;
+const float ADC_REF = 3.3;
+const float VOLTAGE_SCALE = 5.305;
+const float VOUT_MAX = 7.8;
+
+// -------------------- PWM --------------------
+const int PWM_FREQ = 5000;
+const int PWM_RESOLUTION = 8;
+const int PWM_MAX = 255;
+
+// -------------------- Timing --------------------
+const unsigned long DEBOUNCE_MS = 100;
+const unsigned long LCD_UPDATE_MS = 120;
+const unsigned long FLASH_MS = 400;
+
+// -------------------- Debounce state --------------------
+bool stableB1 = LOW, lastB1 = LOW;      // active-high
+bool stableB2 = HIGH, lastB2 = HIGH;    // active-low
+bool stableB3 = HIGH, lastB3 = HIGH;    // active-low
+bool stableB4 = HIGH, lastB4 = HIGH;    // active-low
+
+unsigned long tB1 = 0, tB2 = 0, tB3 = 0, tB4 = 0;
+
+// -------------------- System state --------------------
+bool button1LatchedRun = false;
+bool constantInjection = false;
+bool extRelayState = false;
+bool pumpRunning = false;
+bool eDrainModeActive = false;
+
+unsigned long lastLcdUpdate = 0;
+unsigned long lastFlashToggle = 0;
+bool flashState = false;
+
+// -------------------- Debounce helper --------------------
+bool debounceRead(int pin, bool &lastReading, bool &stableState, unsigned long &lastChangeTime) {
+  bool reading = digitalRead(pin);
+
+  if (reading != lastReading) {
+    lastChangeTime = millis();
+    lastReading = reading;
+  }
+
+  if ((millis() - lastChangeTime) > DEBOUNCE_MS) {
+    if (stableState != reading) {
+      stableState = reading;
+      return true;
+    }
+  }
+  return false;
+}
+
+// -------------------- Helpers --------------------
+void updateExternalRelay() {
+  digitalWrite(RELAY3_PIN, extRelayState ? RELAY_ON : RELAY_OFF);
+}
+
+void setPumpOff() {
+  digitalWrite(RELAY1_PIN, RELAY_OFF);
+  digitalWrite(RELAY2_PIN, RELAY_OFF); // default CW
+  ledcWrite(PWM_PIN, 0);
+  pumpRunning = false;
+}
+
+void setPumpCW(int pwmValue) {
+  pwmValue = constrain(pwmValue, 0, PWM_MAX);
+  digitalWrite(RELAY2_PIN, RELAY_OFF); // CW
+  digitalWrite(RELAY1_PIN, RELAY_ON);  // start
+  ledcWrite(PWM_PIN, pwmValue);
+  pumpRunning = (pwmValue > 0);
+}
+
+void setPumpCCWMax() {
+  digitalWrite(RELAY2_PIN, RELAY_ON);  // CCW
+  digitalWrite(RELAY1_PIN, RELAY_ON);  // start
+  ledcWrite(PWM_PIN, PWM_MAX);
+  pumpRunning = true;
+}
+
+int readPotRaw() {
+  return analogRead(POT_PIN);
+}
+
+int potToPwm(int potRaw) {
+  // inverted because your potentiometer direction is reversed
+  int pwmValue = map(potRaw, 0, ADC_MAX, PWM_MAX, 0);
+  return constrain(pwmValue, 0, PWM_MAX);
+}
+
+float readMeasuredVoltage() {
+  int raw = analogRead(VSENSE_PIN);
+  float adcVoltage = (raw / (float)ADC_MAX) * ADC_REF;
+  float measuredVoltage = adcVoltage * VOLTAGE_SCALE;
+  if (measuredVoltage < 0.0) measuredVoltage = 0.0;
+  return measuredVoltage;
+}
+
+void updateLCD(float measuredVoltage) {
+  if (millis() - lastLcdUpdate < LCD_UPDATE_MS) return;
+  lastLcdUpdate = millis();
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("M2 ");
+  lcd.print(measuredVoltage, 2);
+  lcd.print("V");
+
+  lcd.setCursor(0, 1);
+
+  if (eDrainModeActive) {
+    lcd.print("EDRAIN");
+    return;
+  }
+
+  if (pumpRunning) {
+    lcd.print("RUN");
+  } else {
+    lcd.print("STOP");
+  }
+
+  if (constantInjection && flashState) {
+    lcd.setCursor(13, 1);
+    lcd.print("\xFF\xFF\xFF");
+  }
+}
+
+void forceEmergencyDrainMode() {
+  button1LatchedRun = false;
+  constantInjection = false;
+
+  extRelayState = false;
+  updateExternalRelay();
+
+  setPumpCCWMax();
+  eDrainModeActive = true;
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+
+  pinMode(BUTTON1_PIN, INPUT_PULLDOWN); // active-high
+  pinMode(BUTTON2_PIN, INPUT_PULLUP);   // active-low
+  pinMode(BUTTON3_PIN, INPUT_PULLUP);   // active-low
+  pinMode(BUTTON4_PIN, INPUT_PULLUP);   // active-low
+
+  // USER-CONFIRMED CORRECT SETUP
+  pinMode(EDRAIN_PIN, INPUT_PULLUP);    // idle HIGH, pressed LOW
+
+  pinMode(RELAY1_PIN, OUTPUT);
+  pinMode(RELAY2_PIN, OUTPUT);
+  pinMode(RELAY3_PIN, OUTPUT);
+
+  digitalWrite(RELAY1_PIN, RELAY_OFF);
+  digitalWrite(RELAY2_PIN, RELAY_OFF);
+  digitalWrite(RELAY3_PIN, RELAY_OFF);
+
+  analogReadResolution(12);
+
+  ledcAttach(PWM_PIN, PWM_FREQ, PWM_RESOLUTION);
+  ledcWrite(PWM_PIN, 0);
+
+  Wire.begin(21, 22);
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Mode 2 Test");
+  lcd.setCursor(0, 1);
+  lcd.print("Init...");
+  delay(1000);
+  lcd.clear();
+
+  setPumpOff();
+  updateExternalRelay();
+}
+
+void loop() {
+  if (millis() - lastFlashToggle >= FLASH_MS) {
+    lastFlashToggle = millis();
+    flashState = !flashState;
+  }
+
+  // ==================================================
+  // TOP PRIORITY: E-DRAIN
+  // INPUT_PULLUP + normally closed/override wiring
+  // ACTIVE when pin reads LOW
+  // No debounce here: immediate override
+  // ==================================================
+  if (digitalRead(EDRAIN_PIN) == HIGH) {
+    forceEmergencyDrainMode();
+
+    float measuredVoltage = readMeasuredVoltage();
+    updateLCD(measuredVoltage);
+
+    static unsigned long lastEDrainPrint = 0;
+    if (millis() - lastEDrainPrint > 250) {
+      lastEDrainPrint = millis();
+      Serial.println("E-DRAIN ACTIVE: overriding everything");
+    }
+
+    return;
+  } else {
+    eDrainModeActive = false;
+  }
+
+  // -------------------- NORMAL BUTTON LOGIC --------------------
+  bool changedB1 = debounceRead(BUTTON1_PIN, lastB1, stableB1, tB1);
+  bool changedB2 = debounceRead(BUTTON2_PIN, lastB2, stableB2, tB2);
+  bool changedB3 = debounceRead(BUTTON3_PIN, lastB3, stableB3, tB3);
+  bool changedB4 = debounceRead(BUTTON4_PIN, lastB4, stableB4, tB4);
+
+  if (changedB1 && stableB1 == HIGH) {
+    button1LatchedRun = !button1LatchedRun;
+    Serial.print("Button1 latched run: ");
+    Serial.println(button1LatchedRun ? "ON" : "OFF");
+  }
+
+  if (changedB3 && stableB3 == LOW) {
+    constantInjection = !constantInjection;
+    Serial.print("Constant injection: ");
+    Serial.println(constantInjection ? "ON" : "OFF");
+  }
+
+  if (changedB4 && stableB4 == LOW) {
+    extRelayState = !extRelayState;
+    updateExternalRelay();
+    Serial.print("External relay: ");
+    Serial.println(extRelayState ? "ON" : "OFF");
+  }
+
+  if (changedB2 && stableB2 == LOW) {
+    Serial.println("Button 2 pressed: reserved / unused");
+  }
+
+  int potRaw = readPotRaw();
+  int pwmValue = potToPwm(potRaw);
+  float measuredVoltage = readMeasuredVoltage();
+
+  if (constantInjection || button1LatchedRun) {
+    setPumpCW(pwmValue);
+  } else {
+    setPumpOff();
+  }
+
+  static unsigned long lastSerial = 0;
+  if (millis() - lastSerial > 250) {
+    lastSerial = millis();
+
+    float cmdPercent = 100.0f * pwmValue / PWM_MAX;
+    float nominalV = VOUT_MAX * pwmValue / PWM_MAX;
+
+    Serial.print("PotRaw: ");
+    Serial.print(potRaw);
+    Serial.print(" | PWM: ");
+    Serial.print(pwmValue);
+    Serial.print(" | Cmd%: ");
+    Serial.print(cmdPercent, 1);
+    Serial.print(" | CmdV: ");
+    Serial.print(nominalV, 2);
+    Serial.print(" | MeasV: ");
+    Serial.print(measuredVoltage, 2);
+    Serial.print(" | B1Latch: ");
+    Serial.print(button1LatchedRun ? "ON" : "OFF");
+    Serial.print(" | Const: ");
+    Serial.print(constantInjection ? "ON" : "OFF");
+    Serial.print(" | EXT: ");
+    Serial.println(extRelayState ? "ON" : "OFF");
+  }
+
+  updateLCD(measuredVoltage);
+}

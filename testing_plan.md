@@ -16,9 +16,10 @@ when buttons are pressed, display it on LCD screemn
 2.display it on LCD screen too
 
 **MOSFETS**
-If button 1 is pressed, close mosfet 1
-if button 2 is pressed close mosfet 2
-if button 3 is pressed, close mosfet 3
+If button 1 is pressed, close relay 1
+if button 2 is pressed close relay 2
+if button 3 is pressed, close relay 3
+if button 4 is preseed, close relay 4
 
 
 **PWM sensor**

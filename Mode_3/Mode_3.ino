@@ -332,23 +332,29 @@ void loop() {
             Serial.print("mm  VStart=");      Serial.print(VStart, 3);
             Serial.println("V");
         } else if (phase == RUNNING) {
-            pumpStop();
-            setPWM(0);
+            // Return to pot-controlled IDLE — pump keeps running at pot speed
             integrator = 0.0f;
             phase = IDLE;
-            Serial.println("# STOPPED by B3");
+            Serial.println("# STOPPED by B3 — returning to pot control");
         }
     }
 
-    // ─── FAST TICK: 50 Hz — inner P voltage loop ───
+    // ─── FAST TICK: 50 Hz — inner P voltage loop (RUNNING) or pot control (IDLE) ───
     if (now - tFast >= 20) {
         tFast = now;
         V_meas = readVoltage();
 
         if (phase == RUNNING) {
+            // Auto: inner P loop drives PWM to hit V_cmd
             float vErr   = V_cmd - V_meas;
             float newPWM = (float)currentPWM + Kp_INNER * vErr * 0.02f;
             setPWM((uint8_t)clampf(newPWM, 0.0f, 255.0f));
+        } else if (phase == IDLE) {
+            // Manual: potentiometer directly sets pump speed (pump runs CW in IDLE)
+            int potRaw = analogRead(PIN_POT);
+            uint8_t potPWM = (uint8_t)map(potRaw, 0, 4095, 0, 255);
+            pumpRunCW();
+            setPWM(potPWM);
         }
     }
 
@@ -416,8 +422,9 @@ void loop() {
                 snprintf(l0, sizeof(l0), "SENSOR FAULT!   ");
             }
         } else {
+            // IDLE: show distance and current pot-driven voltage
             snprintf(l0, sizeof(l0), "IDLE D%7.3f mm", y_real);
-            snprintf(l1, sizeof(l1), "V%4.1f  B3=Start", V_meas);
+            snprintf(l1, sizeof(l1), "V%4.1f P%3d B3=GO", V_meas, currentPWM);
         }
 
         lcdShow(l0, l1);

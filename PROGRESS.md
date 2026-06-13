@@ -8,7 +8,7 @@ _Update this file as you complete each task._
 
 | Status | # | Task | Notes |
 |--------|---|------|-------|
-| ⬜ | H1 | Fix laser sensor 5V/3.3V mismatch on RO line | Options: swap to MAX3485 @ 3.3V · resistor divider on RO · try powering existing module from 3.3V |
+| ✅ | H1 | Fix laser sensor 5V/3.3V mismatch on RO line | Resolved by swapping MAX485 → MAX3485 (3.3V native). Sensor confirmed communicating. |
 | ⬜ | H2 | Verify relay wiring: Relay1 HIGH=run, Relay2 LOW=CW inject | Wrong wiring = pump drains instead of injects |
 | ⬜ | H3 | Confirm E-stop switch: normally-closed to GND on D27 | Code activates E-stop when D27 HIGH — wrong wiring = stuck in E-stop |
 

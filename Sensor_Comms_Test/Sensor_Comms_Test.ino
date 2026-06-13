@@ -2,20 +2,22 @@
 //  Sensor_Comms_Test.ino
 //  SDL laser distance sensor — basic comms test
 //
-//  Module: auto-direction MAX3485 (no RE/DE pin needed)
+//  Module: MAX3485 with RE/DE pins (3.3V native, no level shifting needed)
 //  Wiring:
-//    Module RO  → ESP32 RX2 (GPIO 16)
-//    Module DI  → ESP32 TX2 (GPIO 17)
-//    Module VCC → ESP32 3.3V
-//    Module GND → common GND
+//    Module RO      → ESP32 RX2 (GPIO 16)
+//    Module DI      → ESP32 TX2 (GPIO 17)
+//    Module RE + DE (tied together) → ESP32 D4 (GPIO 4)
+//    Module VCC     → ESP32 3.3V
+//    Module GND     → common GND
 //    Sensor RS-485 A → Module A
 //    Sensor RS-485 B → Module B
-//    Sensor powered from 24V (common GND)
+//    Sensor powered from 24V (common GND with ESP32)
 //
 //  Open Serial Monitor at 115200 baud.
 //  Healthy response starts: 01 03 04 ...
 // ============================================================
 
+#define PIN_REDE            4     // RE and DE tied together, driven from this pin
 #define RS485_BAUD          9600
 #define RESPONSE_TIMEOUT_MS 200
 
@@ -34,8 +36,10 @@ uint16_t crc16(const uint8_t* data, uint8_t len) {
 void setup() {
     Serial.begin(115200);
     Serial2.begin(RS485_BAUD, SERIAL_8N1);  // RX2=GPIO16, TX2=GPIO17
+    pinMode(PIN_REDE, OUTPUT);
+    digitalWrite(PIN_REDE, LOW);            // start in receive mode
     delay(500);
-    Serial.println("=== SDL Sensor Comms Test ===");
+    Serial.println("=== SDL Sensor Comms Test (MAX3485 with RE/DE) ===");
     Serial.println("Polling at 1 Hz. Good response: 01 03 04 ...");
     Serial.println();
 }
@@ -44,9 +48,11 @@ void loop() {
     // Flush stale bytes
     while (Serial2.available()) Serial2.read();
 
-    // Send query
+    // Switch to TX, send query, wait until last bit physically sent, switch back to RX
+    digitalWrite(PIN_REDE, HIGH);
     Serial2.write(QUERY, sizeof(QUERY));
-    Serial2.flush();
+    Serial2.flush();                        // critical: wait until UART finishes
+    digitalWrite(PIN_REDE, LOW);            // switch to RX before sensor replies
 
     // Collect response
     uint8_t buf[9];
@@ -69,7 +75,7 @@ void loop() {
 
     // Validate and decode
     if (got < 9) {
-        Serial.println("FAIL: timeout — check power, A/B wires, baud rate");
+        Serial.println("FAIL: timeout — check 24V power, A/B wires, baud rate");
     } else if (buf[0] != 0x01 || buf[1] != 0x03 || buf[2] != 0x04) {
         Serial.println("FAIL: bad frame — try swapping A and B wires");
     } else {

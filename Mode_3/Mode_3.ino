@@ -143,9 +143,13 @@ static uint16_t crc16(const uint8_t* data, uint8_t len) {
 static bool readDistance(float& out_mm) {
     while (Serial2.available()) Serial2.read();     // flush stale bytes
 
+    // Guard 1: let DE fully activate before first bit (see RS485_Direction_Switching_Analysis.md)
     digitalWrite(PIN_REDE, HIGH);
+    delayMicroseconds(200);
     Serial2.write(MODBUS_QUERY, 8);
     Serial2.flush();
+    // Guard 2: let stop bit propagate before receiver enables
+    delayMicroseconds(200);
     digitalWrite(PIN_REDE, LOW);
 
     uint8_t buf[9];
@@ -161,8 +165,11 @@ static bool readDistance(float& out_mm) {
     uint16_t crcRecv = (uint16_t)buf[8] << 8 | buf[7];
     if (crcCalc != crcRecv) return false;
 
-    uint32_t raw = ((uint32_t)buf[3] << 24) | ((uint32_t)buf[4] << 16)
-                 | ((uint32_t)buf[5] <<  8) |  (uint32_t)buf[6];
+    // Word-swapped decode: wire sends low word first, then high word
+    // e.g. B8 47 00 00 → loWord=0xB847, hiWord=0x0000 → 47175 → 47.175 mm
+    uint16_t loWord = ((uint16_t)buf[3] << 8) | buf[4];
+    uint16_t hiWord = ((uint16_t)buf[5] << 8) | buf[6];
+    int32_t  raw    = (int32_t)(((uint32_t)hiWord << 16) | loWord);
     out_mm = raw / 1000.0f;
     return true;
 }

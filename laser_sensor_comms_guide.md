@@ -123,57 +123,52 @@ uint16_t crc16Modbus(const uint8_t *data, uint8_t len) {
 
 ## Correct Read Cycle (Code Template)
 
+> ⚠️ **Critical:** Two `delayMicroseconds(200)` guards are required around the transmission.
+> See `RS485_Direction_Switching_Analysis.md` for the full explanation.
+> `flush()` alone is NOT sufficient — it only empties the UART shift register, not the physical bus.
+
 ```cpp
-#define PIN_REDE 4
-#define BAUD     9600
+#define RE_DE_PIN 4
+
+HardwareSerial RS485Serial(2);  // explicit UART2 instance
 
 const uint8_t query[8] = {0x01, 0x03, 0x00, 0x3B, 0x00, 0x02, 0xB5, 0xC6};
-const int RESPONSE_LEN = 9;
-const int RESPONSE_TIMEOUT_MS = 100;
 
 void setup() {
     Serial.begin(115200);
-    Serial2.begin(BAUD, SERIAL_8N1);  // RX2=16, TX2=17
-    pinMode(PIN_REDE, OUTPUT);
-    digitalWrite(PIN_REDE, LOW);      // start in RX mode
+    RS485Serial.begin(9600, SERIAL_8N1, 16, 17);  // RX=GPIO16, TX=GPIO17
+    pinMode(RE_DE_PIN, OUTPUT);
+    digitalWrite(RE_DE_PIN, LOW);      // start in RX mode
 }
 
 bool readDistance(float &distance_mm) {
-    // 1. Flush any stale incoming data
-    while (Serial2.available()) Serial2.read();
+    // 1. Enable transmit driver; wait for it to fully activate on the bus
+    digitalWrite(RE_DE_PIN, HIGH);
+    delayMicroseconds(200);            // Guard 1 — driver settle (~2 bit periods at 9600)
 
-    // 2. Switch to TX, send query
-    digitalWrite(PIN_REDE, HIGH);
-    Serial2.write(query, sizeof(query));
-    Serial2.flush();                  // wait until all bytes physically transmitted
+    // 2. Send query
+    RS485Serial.write(query, sizeof(query));
+    RS485Serial.flush();               // wait for UART shift register to empty
 
-    // 3. Switch back to RX immediately
-    digitalWrite(PIN_REDE, LOW);
+    // 3. Wait for stop bit to propagate, then switch to receive
+    delayMicroseconds(200);            // Guard 2 — bus settle before receiver enables
+    digitalWrite(RE_DE_PIN, LOW);
 
-    // 4. Wait for full response
-    uint8_t buf[RESPONSE_LEN];
+    // 4. Collect response
+    uint8_t buf[9];
     int received = 0;
     unsigned long start = millis();
-
-    while (received < RESPONSE_LEN) {
-        if (millis() - start > RESPONSE_TIMEOUT_MS) return false; // timeout
-        if (Serial2.available()) buf[received++] = Serial2.read();
+    while (received < 9 && millis() - start < 50) {
+        if (RS485Serial.available()) buf[received++] = RS485Serial.read();
     }
 
-    // 5. Validate frame structure
-    if (buf[0] != 0x01) return false;  // wrong slave address
-    if (buf[1] != 0x03) return false;  // wrong function code
-    if (buf[2] != 0x04) return false;  // wrong byte count
+    if (received < 9) return false;
+    if (buf[0] != 0x01 || buf[1] != 0x03 || buf[2] != 0x04) return false;
 
-    // 6. (Optional but recommended) Validate CRC
-    uint16_t crcCalc = crc16Modbus(buf, 7);
-    uint16_t crcRecv = (uint16_t)buf[8] << 8 | buf[7];  // CRC is little-endian in frame
-    if (crcCalc != crcRecv) return false;
-
-    // 7. Decode distance
+    // 5. Decode distance (SDL-100/200/400: 1 µm resolution → divide by 1000)
     uint32_t raw = ((uint32_t)buf[3] << 24) | ((uint32_t)buf[4] << 16)
                  | ((uint32_t)buf[5] <<  8) |  (uint32_t)buf[6];
-    distance_mm = raw / 1000.0;
+    distance_mm = raw / 1000.0f;
     return true;
 }
 
@@ -183,8 +178,6 @@ void loop() {
         Serial.print("Distance: ");
         Serial.print(dist, 3);
         Serial.println(" mm");
-    } else {
-        Serial.println("No valid response");
     }
     delay(100);  // 10 Hz
 }

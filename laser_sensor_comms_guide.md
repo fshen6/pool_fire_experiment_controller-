@@ -72,17 +72,26 @@
 
 ### Decoding the Distance Value
 
-Reconstruct the 32-bit integer from D0–D3 (big-endian):
+The sensor sends the 32-bit value **word-swapped** (Modbus register format): the low 16-bit word arrives first on the wire, then the high 16-bit word. Each word is big-endian internally.
+
+```
+Wire bytes:   B8 47  00 00
+              ─────  ─────
+              loWord hiWord   →  raw = (hiWord << 16) | loWord = 0x0000B847 = 47175
+```
 
 ```cpp
-uint32_t raw = ((uint32_t)D0 << 24) | ((uint32_t)D1 << 16) | ((uint32_t)D2 << 8) | D3;
-float distance_mm = raw / 1000.0;
+uint16_t loWord = ((uint16_t)buf[3] << 8) | buf[4];   // first word on wire = low 16 bits
+uint16_t hiWord = ((uint16_t)buf[5] << 8) | buf[6];   // second word on wire = high 16 bits
+int32_t  raw    = (int32_t)(((uint32_t)hiWord << 16) | loWord);
+float distance_mm = raw / 1000.0f;   // see divisor table below; value can be negative
 ```
 
 **Example from manual:**  
-Response data bytes: `00 00 B8 47`  
-→ `0x0000B847` = 47175 (decimal)  
+Wire bytes: `B8 47 00 00` → loWord = 0xB847, hiWord = 0x0000 → raw = 0x0000B847 = 47175  
 → 47175 µm = **47.175 mm**
+
+> ⚠️ Note: a naive big-endian decode (`buf[3]<<24 | buf[4]<<16 | buf[5]<<8 | buf[6]`) gives the correct answer only when the distance is < 65.535 mm (high word = 0). For any larger distance the words must be swapped as shown above.
 
 ### Resolution by Model
 
@@ -127,59 +136,108 @@ uint16_t crc16Modbus(const uint8_t *data, uint8_t len) {
 > See `RS485_Direction_Switching_Analysis.md` for the full explanation.
 > `flush()` alone is NOT sufficient — it only empties the UART shift register, not the physical bus.
 
+This is the confirmed-working sketch (`Sensor_Comms_Test/Sensor_Comms_Test.ino`):
+
 ```cpp
-#define RE_DE_PIN 4
+// ---------- Pins ----------
+static const int PIN_RX2  = 16;   // MAX3485 RO  -> ESP32 RX2
+static const int PIN_TX2  = 17;   // MAX3485 DI  <- ESP32 TX2
+static const int PIN_REDE = 4;    // MAX3485 RE+DE (tied) <- ESP32 GPIO4
 
-HardwareSerial RS485Serial(2);  // explicit UART2 instance
+// ---------- Comms settings ----------
+static const uint32_t SENSOR_BAUD         = 9600;
+static const uint8_t  SENSOR_ADDR         = 0x01;
+static const uint32_t POLL_INTERVAL_MS    = 20;
+static const uint32_t RESPONSE_TIMEOUT_MS = 50;
 
-const uint8_t query[8] = {0x01, 0x03, 0x00, 0x3B, 0x00, 0x02, 0xB5, 0xC6};
+/*
+ * Distance divisor depends on the SDL model:
+ *   SDL-030 / SDL-050           -> 10000.0  (0.1 µm resolution)
+ *   SDL-100 / SDL-200 / SDL-400 ->  1000.0  (1 µm resolution)   <-- default
+ *   SDL-800                     ->   100.0  (10 µm resolution)
+ * If readings are exactly 10× or 100× off, change this value.
+ */
+static const float DISTANCE_DIVISOR = 1000.0f;
+
+uint8_t query[8];
+uint8_t buf[16];
+
+uint16_t crc16(const uint8_t *data, uint8_t len) {
+    uint16_t crc = 0xFFFF;
+    for (uint8_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t b = 0; b < 8; b++)
+            crc = (crc & 1) ? ((crc >> 1) ^ 0xA001) : (crc >> 1);
+    }
+    return crc;
+}
+
+void buildQuery() {
+    query[0] = SENSOR_ADDR;
+    query[1] = 0x03;        // read holding registers
+    query[2] = 0x00;        // register address hi
+    query[3] = 0x3B;        // register address lo
+    query[4] = 0x00;        // register count hi
+    query[5] = 0x02;        // register count lo (2 regs = 32 bits)
+    uint16_t c = crc16(query, 6);
+    query[6] = c & 0xFF;    // CRC low byte first (Modbus little-endian)
+    query[7] = c >> 8;
+}
+
+// Send the query and read up to 9 bytes. Returns byte count received.
+int pollSensor() {
+    while (Serial2.available()) Serial2.read();   // drain stale bytes
+
+    // --- Transmit ---
+    digitalWrite(PIN_REDE, HIGH);     // driver enabled -> TX mode
+    delayMicroseconds(200);           // Guard 1: let DE settle before first start bit
+    Serial2.write(query, 8);
+    Serial2.flush();                  // wait for frame to finish sending
+    delayMicroseconds(200);           // Guard 2: bus settle before releasing driver
+    digitalWrite(PIN_REDE, LOW);      // switch to RX before reply lands
+
+    // --- Receive ---
+    int idx = 0;
+    uint32_t start = millis();
+    while (idx < 9 && (millis() - start) < RESPONSE_TIMEOUT_MS) {
+        if (Serial2.available()) buf[idx++] = Serial2.read();
+    }
+    return idx;
+}
 
 void setup() {
     Serial.begin(115200);
-    RS485Serial.begin(9600, SERIAL_8N1, 16, 17);  // RX=GPIO16, TX=GPIO17
-    pinMode(RE_DE_PIN, OUTPUT);
-    digitalWrite(RE_DE_PIN, LOW);      // start in RX mode
-}
-
-bool readDistance(float &distance_mm) {
-    // 1. Enable transmit driver; wait for it to fully activate on the bus
-    digitalWrite(RE_DE_PIN, HIGH);
-    delayMicroseconds(200);            // Guard 1 — driver settle (~2 bit periods at 9600)
-
-    // 2. Send query
-    RS485Serial.write(query, sizeof(query));
-    RS485Serial.flush();               // wait for UART shift register to empty
-
-    // 3. Wait for stop bit to propagate, then switch to receive
-    delayMicroseconds(200);            // Guard 2 — bus settle before receiver enables
-    digitalWrite(RE_DE_PIN, LOW);
-
-    // 4. Collect response
-    uint8_t buf[9];
-    int received = 0;
-    unsigned long start = millis();
-    while (received < 9 && millis() - start < 50) {
-        if (RS485Serial.available()) buf[received++] = RS485Serial.read();
-    }
-
-    if (received < 9) return false;
-    if (buf[0] != 0x01 || buf[1] != 0x03 || buf[2] != 0x04) return false;
-
-    // 5. Decode distance (SDL-100/200/400: 1 µm resolution → divide by 1000)
-    uint32_t raw = ((uint32_t)buf[3] << 24) | ((uint32_t)buf[4] << 16)
-                 | ((uint32_t)buf[5] <<  8) |  (uint32_t)buf[6];
-    distance_mm = raw / 1000.0f;
-    return true;
+    delay(300);
+    pinMode(PIN_REDE, OUTPUT);
+    digitalWrite(PIN_REDE, LOW);
+    Serial2.begin(SENSOR_BAUD, SERIAL_8N1, PIN_RX2, PIN_TX2);
+    buildQuery();
 }
 
 void loop() {
-    float dist;
-    if (readDistance(dist)) {
-        Serial.print("Distance: ");
-        Serial.print(dist, 3);
-        Serial.println(" mm");
+    int n = pollSensor();
+
+    if (n < 9 || buf[0] != SENSOR_ADDR || buf[1] != 0x03 || buf[2] != 0x04) {
+        delay(POLL_INTERVAL_MS);
+        return;
     }
-    delay(100);  // 10 Hz
+
+    uint16_t crcCalc = crc16(buf, 7);
+    uint16_t crcRecv = ((uint16_t)buf[8] << 8) | buf[7];  // buf[7]=lo, buf[8]=hi
+    if (crcCalc != crcRecv) { delay(POLL_INTERVAL_MS); return; }
+
+    // Decode: wire order is word-swapped (low word first, then high word)
+    // e.g. wire bytes B8 47 00 00 → loWord=0xB847, hiWord=0x0000 → 47175 → 47.175 mm
+    uint16_t loWord = ((uint16_t)buf[3] << 8) | buf[4];
+    uint16_t hiWord = ((uint16_t)buf[5] << 8) | buf[6];
+    int32_t  raw    = (int32_t)(((uint32_t)hiWord << 16) | loWord);
+    float distance_mm = raw / DISTANCE_DIVISOR;
+
+    Serial.print("Distance: ");
+    Serial.print(distance_mm, 3);
+    Serial.println(" mm");
+
+    delay(POLL_INTERVAL_MS);
 }
 ```
 

@@ -6,8 +6,8 @@
  *
  * Procedure (all automatic after button press):
  *   1. Press B3  → 10 s baseline recording (distance only, pump OFF)
- *   2. Auto      → pump fires at target voltage for 1 s (step input)
- *   3. Auto      → 30 s post-step recording (pump OFF, watch for level change)
+ *   2. Auto      → pump fires CCW (drain) at target voltage for 5 s (step input)
+ *   3. Auto      → 60 s post-step recording (pump OFF, watch for level change)
  *   4. Done      → summary printed; press B3 again to repeat
  *
  * Output: CSV on Serial at 115200 baud — paste into Excel or plot in Python.
@@ -34,8 +34,8 @@
 
 // ── Test parameters ─────────────────────────────────────────────────────
 #define BASELINE_MS   10000   // 10 s of recording before pump fires
-#define PUMP_ON_MS     1000   // 1 s pump burst (step input)
-#define POST_RECORD_MS 30000  // 30 s recording after pump stops
+#define PUMP_ON_MS     5000   // 5 s pump burst (step input)
+#define POST_RECORD_MS 60000  // 60 s recording after pump stops
 #define SAMPLE_MS       100   // 10 Hz sampling rate
 
 // Target pump voltage. Converter maps PWM 0–255 → roughly 0–10 V.
@@ -110,8 +110,8 @@ float readVoltage() {
 
 // ── Pump helpers ─────────────────────────────────────────────────────────
 void pumpStop()  { digitalWrite(PIN_RELAY1, LOW);  analogWrite(PIN_PWM, 0); }
-void pumpFireCW(uint8_t pwm) {
-    digitalWrite(PIN_RELAY2, LOW);   // CW = inject
+void pumpFireCCW(uint8_t pwm) {
+    digitalWrite(PIN_RELAY2, HIGH);  // CCW = drain (reversed direction)
     digitalWrite(PIN_RELAY1, HIGH);  // run
     analogWrite(PIN_PWM, pwm);
 }
@@ -195,14 +195,14 @@ void loop() {
             }
             if (now - phaseStart >= BASELINE_MS) {
                 // Fire pump
-                pumpFireCW(PUMP_PWM);
+                pumpFireCCW(PUMP_PWM);
                 phaseStart  = now;
                 lastSample  = now;
                 sampleCount = 0;
                 state       = PUMP_ON;
-                Serial.print(F("# PUMP_ON ("));
+                Serial.print(F("# PUMP_ON CCW ("));
                 Serial.print(PUMP_PWM);
-                Serial.println(F(" PWM, 1 s)"));
+                Serial.println(F(" PWM, 5 s)"));
             }
             break;
 
@@ -232,8 +232,9 @@ void loop() {
                 Serial.println(F("# ── SUMMARY ──────────────────────────────────────"));
                 Serial.print  (F("# Distance at pump start : "));
                 Serial.print  (distAtPumpStart, 3); Serial.println(F(" mm"));
+                Serial.println(F("# Draining (CCW): level drops -> distance INCREASES."));
                 Serial.println(F("# Look at the CSV: find first POST row where"));
-                Serial.println(F("#   distance_mm < (distance at pump start - 0.05 mm)"));
+                Serial.println(F("#   distance_mm > (distance at pump start + 0.05 mm)"));
                 Serial.println(F("# That timestamp - pump start timestamp = response time"));
                 Serial.println(F("# ───────────────────────────────────────────────────"));
                 Serial.println(F("# Press B3 to run again."));
